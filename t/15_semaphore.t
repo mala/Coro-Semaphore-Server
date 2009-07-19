@@ -23,10 +23,20 @@ if (my $pid = fork) {
 
 my $semaphore = Coro::Semaphore::Client->new('127.0.0.1:'. $port);
 
+use AnyEvent;
+use Data::Dumper;
+
+my $w = AnyEvent->timer(interval => 2, cb => sub {
+    warn Dumper [  Coro::State::list ];
+    # warn Dumper [$Coro::Semaphore::RemoteObject::Write, $Coro::Semaphore::RemoteObject::Read];
+    warn Dumper $semaphore;
+    cede;
+});
 
 {
    my $sem = $semaphore->get("tmp", 2);
    my $ct = $sem->count;
+# warn $ct;
    $sem->adjust(2 - $ct);
 	warn $sem->count;
 # exit;
@@ -48,7 +58,7 @@ my $semaphore = Coro::Semaphore::Client->new('127.0.0.1:'. $port);
                cede if 0.2 > xrand;
                Coro::async_pool { $current->ready } if 0.2 > xrand;
                my $ct = $sem->count;
-               warn $ct;
+               # warn $ct;
                $counter += $ct;
                my $guard = $sem->guard;
                cede; cede; cede; cede;
@@ -56,16 +66,21 @@ my $semaphore = Coro::Semaphore::Client->new('127.0.0.1:'. $port);
          }
       } 1..15
    ;
-
+   warn $counter;
    print $counter == 998 ? "" : "not ", "ok 1 # $counter\n";
 }
+exit;
+
+# print "ok 1\n";
 
 # check terminate
 {
-  my $sem = $semaphore->get("tmp2", 0);
+   my $sem = $semaphore->get("tmp2", 0);
+   $sem->adjust(- $sem->count);
 
 
    $as1 = async {
+      $Coro::current->desc("as1");
       my $g = $sem->guard;
       print "not ok 2\n";
    };    
@@ -77,6 +92,7 @@ my $semaphore = Coro::Semaphore::Client->new('127.0.0.1:'. $port);
 
    cede;
 
+   warn Dumper { as1 => $as1 };
    $sem->up; # wake up as1
    $as1->cancel; # destroy as1 before it could ->guard
    $as1->join;
@@ -85,13 +101,15 @@ my $semaphore = Coro::Semaphore::Client->new('127.0.0.1:'. $port);
 
 # check throw
 {
-   my $sem = $semaphore->get("tmp3", 0);
 
+   my $sem = $semaphore->get("tmp3", 0);
+   $sem->adjust(- $sem->count);
 
    $as1 = async {
       my $g = eval {
          $sem->guard;
       };
+      warn $@;
       print $@ ? "" : "not ", "ok 3\n";
    };    
 
@@ -111,6 +129,7 @@ my $semaphore = Coro::Semaphore::Client->new('127.0.0.1:'. $port);
 # check wait
 {
    my $sem = $semaphore->get("tmp4", 0);
+   $sem->adjust(- $sem->count);
 
 
    $as1 = async {
