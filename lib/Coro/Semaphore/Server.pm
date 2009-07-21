@@ -11,8 +11,6 @@ use Coro::Semaphore;
 use Data::Dumper;
 
 our %Semaphore;
-my $guard_id = 1;
-
 my $Read = 0;
 my $Write = 0;
 
@@ -32,13 +30,11 @@ sub run {
     AnyEvent::Socket::tcp_server $host, $port, sub {
         my ($clsock, $host, $port) = @_;
         warn "accepted";
-        my %guard;
-        my %guard_by_request;
+        my $gc = Coro::Semaphore::Server::GuardContainer->new;
         my $hdl = AnyEvent::Handle->new(
             fh => $clsock,
             on_eof => sub {
-                warn Dumper \%guard;
-                undef %guard;
+                warn Dumper $gc;
                 print "Client connection $host:$port: eof\n" 
             },
             on_error => sub { print "Client connection error: $host:$port: $!\n" },
@@ -56,25 +52,13 @@ sub run {
                     my $sem = $Semaphore{$key} ||= $Semaphore{$key} = Coro::Semaphore->new($cnt);
                     # warn Dumper $sem;
                     
-                    # unguard by client DESTROY
-                    if ($method eq "unguard") {
+                    # unguard by client DESTROY or client Coro terminated
+                    if ($method eq "unguard" || $method eq "cancel_guard") {
                         my $id = $params[0];
-                        delete $guard{$id};
+                        $gc->delete($id);
                         _write($fh, "OK $request_id \r\n");
                         return;
                     } 
-                    # unguard by client Coro terminated
-                    elsif ($method eq "cancel_guard") {
-                        my $guard_req_id = $params[0];
-                        my $id = $guard_by_request{$guard_req_id};
-                        warn "request_id: $guard_req_id";
-                        warn "guard_id: $id";
-                        warn $guard{$id};
-                        # exit;
-                        delete $guard{$id};
-                        _write($fh, "OK $request_id \r\n");
-                        return;
-                    }
                     unless ($sem->can($method)) {
                         _write($fh, "ERROR $request_id unknown method\r\n");
                         return;
@@ -82,11 +66,7 @@ sub run {
                     # warn Dumper $json;
                     my $ret = $sem->$method(@params);
                     if ($method eq "guard") {
-                        # warn "guard";
-                        # warn Dumper \%guard;
-                        my $id = guard_id();
-                        $guard{$id} = $ret;
-                        $guard_by_request{$request_id} = $id;
+                        my $id = $gc->add($request_id, $ret);
                         $ret = $id;
                     }
                     warn "$method: OK $request_id $ret";
@@ -103,8 +83,25 @@ sub _write {
     $fh->push_write($str);
 }
 
-sub guard_id {
-    $guard_id++;
+1;
+
+package 
+    Coro::Semaphore::Server::GuardContainer;
+
+sub new {
+    my $class = shift;
+    bless {}, $class;
+}
+
+sub add {
+    my ($self, $id, $guard) = @_;
+    $self->{$id} = $guard;
+    return $id;
+}
+
+sub delete {
+    my ($self, $guard_id) = @_;
+    delete $self->{$guard_id};
 }
 
 1;

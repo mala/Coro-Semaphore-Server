@@ -69,7 +69,7 @@ my $w = AnyEvent->timer(interval => 2, cb => sub {
    warn $counter;
    print $counter == 998 ? "" : "not ", "ok 1 # $counter\n";
 }
-exit;
+# exit;
 
 # print "ok 1\n";
 
